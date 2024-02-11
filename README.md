@@ -9,15 +9,15 @@ qemu-system-i386 game.bin
 ```
 
 ## Alternative: Run in real hardware
-# 1) Plug the USB
+ 1) Plug the USB
 
-# 2) Make it bootable
+ 2) Make it bootable
 
 ```console
 sudo dd if=real.bin of=/dev/<usb-drive>
 ```
 
-# 3) Boot from USB
+ 3) Boot from USB
 
 ## Controls
 
