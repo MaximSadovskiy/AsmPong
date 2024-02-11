@@ -1,5 +1,6 @@
-[bits 16]
-org 0x7C00
+org 0x7c00
+bits 16
+
 
 %define COLOR_BLACK 0
 %define COLOR_BLUE 1
@@ -47,11 +48,13 @@ org 0x7C00
 %define CLOCK_INTERRUPT     0x15
 %define KEYBOARD_INTERRUPT  0x16
 
+%define LOWER_FLOOR (HEIGHT - BALL_HEIGHT)
+
 %macro drawPlayer 0
     mov dx, PLAYER_START_POS_X
     mov ax, PLAYER_START_POS_Y
     add dx, word[GameData + GameState.PlayerDeX]
-    mov bx, PLAYER_WIDTH 
+    mov bx, PLAYER_WIDTH
     mov cl, PLAYER_HEIGHT
     mov ch, PLAYER_COLOR
     call drawQuad
@@ -66,19 +69,25 @@ struc GameState
     .Intersection resb 1
 endstruc
 
-global _main
-_main:
+boot:
+    jmp main
+    TIMES 3-($-$$) DB 0x90   ; Support 2 or 3 byte encoded JMPs before BPB.
+    ; Fake BPB
+    TIMES 34 DB 0xAA
+main:
+    xor ax, ax
+    mov ds, ax
+    mov ss, ax    ; Set stack just below bootloader at 0x0000:0x7c00
+    mov sp, boot
+    cld           ; Forward direction for string instructions
     mov ax, VGA_MODE
     int VIDEO_INTERRUPT
     jmp frameLoop
-
 frameLoop:
     call delay
-    
     call clearScreen
     drawPlayer
     call drawBall
-
     jmp readKey
 delay:
     mov ax, ((0x86 << 8) + 0x00 << 0)
@@ -86,7 +95,6 @@ delay:
     mov dx, 13500
     int CLOCK_INTERRUPT
     ret
-
 readCharBlocking:
     xor ax, ax
     int KEYBOARD_INTERRUPT
@@ -101,14 +109,11 @@ readKey:
     call readCharBlocking
     jmp .handleKey
 .handleKey:
-    cmp al, 'p'
-    je pauseScreen
     cmp al, 'a'
     je moveLeft
     cmp al, 'd'
     je moveRight
     jmp readKey
-
 drawBall:
     mov byte[GameData + GameState.Intersection], 1
     mov cx, word[GameData + GameState.BallX]
@@ -132,15 +137,13 @@ drawBall:
 .calcX:
     mov bx, word[GameData + GameState.BallY]
     mov cx, bx ; save old
-    mov dx, word[GameData + GameState.BallDeY]
-    add bx, dx
+    ;fix
+    add bx, word[GameData + GameState.BallDeY]
     ; dx =  floor
-    mov dx, HEIGHT - BALL_HEIGHT
-    ;sub dx, BALL_HEIGHT
     mov word[GameData + GameState.BallY], bx
     cmp bx, 0
     jl .reverseY
-    cmp bx, dx
+    cmp bx, LOWER_FLOOR
     jg deathScreen
     ;inter
     cmp bx, (PLAYER_START_POS_Y + PLAYER_HEIGHT)
@@ -184,83 +187,53 @@ drawBall:
     mov word[GameData + GameState.BallDeY], ax
     mov word[GameData + GameState.BallY], cx ; restore old
     jmp .calcY
-
-clearScreen:
-    mov ax, VGA_OFFSET
-    mov es, ax
-    xor si, si
-    jmp .clLoop
-.clLoop:
-    mov byte[es:si], BACKGROUND_COLOR
-    inc si
-    cmp si, (WIDTH * HEIGHT)
-    jb .clLoop
-    ret
-
 deathScreen:
-    ;call delay
     call clearScreen
-    ; Draw gameover screen
     mov ax, ((0x13 << 8) + 0x00 << 0)
     mov bp, gameOverText
     mov cx, gameOverText_size
     mov dx, (((ROWS / 2 - 2) << 8) + ((COLUMNS / 2 - gameOverText_size / 2) << 0))
     xor bx, bx
     mov es, bx
-    mov bl, COLOR_LIGHTGRAY
-    int VIDEO_INTERRUPT
-
-    call readCharBlocking
-    cmp al, ' '
-    je newGame
-    jmp deathScreen
-newGame:
-    mov word[GameData + GameState.BallY], BALL_START_POS_y
-    jmp frameLoop
-pauseScreen:
-    mov ax, ((0x13 << 8) + 0x00 << 0)
-    mov bp, gamePausedText
-    mov cx, gamePausedText_size
-    mov dx, (((ROWS / 2 - 2) << 8) + ((COLUMNS / 2 - gamePausedText_size / 2) << 0))
-    xor bx, bx
-    mov es, bx
     mov bl, COLOR_YELLOW
     int VIDEO_INTERRUPT
 
     call readCharBlocking
-    cmp al, 'p'
-    je frameLoop
-    jmp pauseScreen
-
+    cmp al, ' '
+    jne deathScreen
+    ; Restart Game
+    mov word[GameData + GameState.BallY], BALL_START_POS_y
+    jmp frameLoop
+clearScreen:
+    mov bx, VGA_OFFSET
+    mov es, bx
+    xor di, di
+    mov ax, ((0x0 << 8) + (BACKGROUND_COLOR << 0))
+    mov cx, WIDTH * HEIGHT /  2
+    rep stosw ; Store AL at ES:[DI] and increment DI after each store
+    ret
 moveLeft:
-    ; Precalc min width
     mov bx, (-PLAYER_START_POS_X)
     mov ax, word[GameData + GameState.PlayerDeX]
     sub ax, PLAYER_VELOCITY_X
     mov cx, ax
     add cx, PLAYER_START_POS_X
-    ; if delta < 0 set to min width
     cmp cx, 0
-    jl moveCondition
-    jmp moveEnd
-moveRight:
-    ; ax next delta
-    mov ax, word[GameData + GameState.PlayerDeX]
-    add ax, PLAYER_VELOCITY_X
-    ; Precalc max width
-    mov bx, (WIDTH - (PLAYER_START_POS_X + PLAYER_WIDTH) - 2) 
-    mov cx, ax
-    add cx, (PLAYER_START_POS_X + PLAYER_WIDTH)
-    ; if delta < 320 set to max width
-    cmp cx, WIDTH
-    jg moveCondition
-    jmp moveEnd
-moveCondition:
-    mov ax, bx
-    jmp moveEnd
+    jge moveEnd ; Jump if cx >=  0, which is the minimum width
+    mov ax, bx ; Set to min width if delta <  0
 moveEnd:
     mov word[GameData + GameState.PlayerDeX], ax
     jmp readKey
+moveRight:
+    mov ax, word[GameData + GameState.PlayerDeX]
+    add ax, PLAYER_VELOCITY_X
+    mov bx, (WIDTH - (PLAYER_START_POS_X + PLAYER_WIDTH) -  2)
+    mov cx, ax
+    add cx, (PLAYER_START_POS_X + PLAYER_WIDTH)
+    cmp cx, WIDTH
+    jle moveEnd ; Jump if cx <= WIDTH, which is the maximum width
+    mov ax, bx ; Set to max width if delta > WIDTH
+    jmp moveEnd
 
 ;   dx    ax     cl     bx      ch
 ; (posX, posY, height, length, color)
@@ -313,11 +286,7 @@ istruc GameState
     at GameState.BallDeY,      dw BALL_DELTA_Y
     at GameState.Intersection, db 0
 iend
-
 gameOverText:       db 'Game over'
 gameOverText_size   equ ($ - gameOverText)
-gamePausedText:     db 'Paused'
-gamePausedText_size equ ($ - gamePausedText)
-
 times 510 - ($-$$) db 0
 dw 0xAA55
