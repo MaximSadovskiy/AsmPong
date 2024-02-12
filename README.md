@@ -2,6 +2,8 @@
 Simple ping pong clone game written in assembly
 It works in 16-bit real mode.
 
+![matrix](https://github.com/MaximSadovskiy/AsmPong/blob/main/asmpong.gif)
+
 ## How to run in emulator
 
 ```console
